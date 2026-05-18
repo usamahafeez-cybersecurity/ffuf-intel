@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ffuf-intel"
+version = "1.0.0"
+description = "Intelligent ffuf wrapper with deep content inspection and behavioral reasoning"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "ffuf-intel" }]
+dependencies = [
+    "httpx>=0.27.0",
+    "rich>=13.7.0",
+]
+
+[project.scripts]
+ffuf-intel = "ffuf_intel.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ffuf_intel*"]
+
+[tool.setuptools.package-data]
+ffuf_intel = ["wordlists/*.txt"]
