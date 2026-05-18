@@ -40,6 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable method/content-type probing (405/415/JSON/form negotiation).",
     )
     p.add_argument(
+        "--max-inspect",
+        type=int,
+        default=150,
+        help="Max endpoints to deep-inspect per ffuf pass (default: 150).",
+    )
+    p.add_argument(
         "--auth-policy",
         choices=[p.value for p in AuthPolicy],
         default=AuthPolicy.ASK.value,
@@ -93,6 +99,7 @@ async def _async_main(args: argparse.Namespace) -> int:
         follow_redirects=not args.no_follow_redirects,
         adaptive=not args.no_adaptive,
         auth_consent=AuthConsent(auth_policy, console),
+        max_inspect=args.max_inspect,
     )
     engine = ReasoningEngine(
         ffuf_bin=ffuf_bin,

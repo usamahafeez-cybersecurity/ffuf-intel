@@ -116,7 +116,10 @@ class ReasoningEngine:
         self.console.print(f"  [green]{len(results)}[/] endpoints to inspect")
         if depth == 0 and baseline_host:
             await self.inspector.fetch_baseline(baseline_host)
-        pass_record.findings = await self.inspector.inspect_many([(r.url, r.status) for r in results])
+        pass_record.findings = await self.inspector.inspect_many(
+            [(r.url, r.status) for r in results],
+            console=self.console,
+        )
         for finding in pass_record.findings:
             if finding.is_interesting:
                 self._log_finding(finding)

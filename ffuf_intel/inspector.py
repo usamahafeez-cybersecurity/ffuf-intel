@@ -162,6 +162,7 @@ class DeepInspector:
         user_agent: str = "ffuf-intel/1.0",
         adaptive: bool = True,
         auth_consent: AuthConsent | None = None,
+        max_inspect: int = 150,
     ) -> None:
         self.concurrency = concurrency
         self.timeout = timeout
@@ -170,6 +171,7 @@ class DeepInspector:
         self.user_agent = user_agent
         self.adaptive = adaptive
         self.auth_consent = auth_consent or AuthConsent(AuthPolicy.ASK)
+        self.max_inspect = max(1, max_inspect)
         self._baseline_html: str | None = None
         self.profiles: dict[str, RequestProfile] = {}
         self.site_auth: dict[str, RequestProfile] = {}  # netloc -> profile with creds
@@ -194,9 +196,23 @@ class DeepInspector:
             except httpx.HTTPError:
                 self._baseline_html = None
 
-    async def inspect_many(self, targets: Iterable[tuple[str, int]]) -> list[InspectionFinding]:
+    async def inspect_many(
+        self, targets: Iterable[tuple[str, int]], *, console: Console | None = None
+    ) -> list[InspectionFinding]:
+        from rich.console import Console as RichConsole
+
+        target_list = list(targets)
+        if len(target_list) > self.max_inspect:
+            if console:
+                console.print(
+                    f"  [yellow]Inspecting first {self.max_inspect} of {len(target_list)} endpoints "
+                    f"(raise with --max-inspect)[/]"
+                )
+            target_list = target_list[: self.max_inspect]
+
         sem = asyncio.Semaphore(self.concurrency)
         findings: list[InspectionFinding] = []
+        _console = console or RichConsole()
 
         async with httpx.AsyncClient(
             verify=self.verify_tls,
@@ -236,6 +252,13 @@ class DeepInspector:
                             ffuf_status=ffuf_status,
                             html_signals=["fetch_failed"],
                         )
+                    except Exception as exc:
+                        return InspectionFinding(
+                            url=url,
+                            status=ffuf_status,
+                            ffuf_status=ffuf_status,
+                            html_signals=[f"inspect_error:{type(exc).__name__}"],
+                        )
                     finding = inspect_body(
                         url,
                         resp.status_code,
@@ -245,21 +268,30 @@ class DeepInspector:
                         ffuf_status=ffuf_status,
                         profile=profile if self.adaptive else None,
                     )
-                    auth = await run_auth_probes(
-                        client,
-                        url,
-                        status=resp.status_code,
-                        headers=resp.headers,
-                        body=resp.text,
-                        consent=self.auth_consent,
-                    )
-                    _merge_auth(finding, auth)
-                    if auth.success:
-                        _apply_auth_to_profile(profile, auth)
-                        self.profiles[url] = profile
-                        self.site_auth[self._site_key(url)] = profile
+                    try:
+                        auth = await run_auth_probes(
+                            client,
+                            url,
+                            status=resp.status_code,
+                            headers=resp.headers,
+                            body=resp.text,
+                            consent=self.auth_consent,
+                        )
+                        _merge_auth(finding, auth)
+                        if auth.success:
+                            _apply_auth_to_profile(profile, auth)
+                            self.profiles[url] = profile
+                            self.site_auth[self._site_key(url)] = profile
+                    except Exception as exc:
+                        finding.auth_notes.append(f"auth_probe_error:{type(exc).__name__}")
                     return finding
 
-            results = await asyncio.gather(*[_one(u, s) for u, s in targets])
-            findings.extend(r for r in results if r is not None)
+            results = await asyncio.gather(
+                *[_one(u, s) for u, s in target_list], return_exceptions=True
+            )
+            for item in results:
+                if isinstance(item, InspectionFinding):
+                    findings.append(item)
+                elif isinstance(item, Exception):
+                    _console.print(f"[red]inspect task error:[/] {item}")
         return findings

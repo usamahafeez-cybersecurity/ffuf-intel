@@ -48,7 +48,7 @@ class LoginForm:
 
 @dataclass(slots=True)
 class AuthProbeResult:
-    auth_type: str  # none | basic | form
+    auth_type: str = "none"  # none | basic | form
     login_forms: list[LoginForm] = field(default_factory=list)
     basic_realm: str | None = None
     credential_attempts: int = 0
@@ -308,6 +308,9 @@ async def run_auth_probes(
     consent: AuthConsent,
 ) -> AuthProbeResult:
     """Run detection + optional credential tests."""
+    if not should_run_auth_probe(status=status, headers=headers, body=body, url=url):
+        return AuthProbeResult(auth_type="none")
+
     if not consent.enabled:
         forms = detect_login_forms(url, body)
         if forms:
@@ -315,7 +318,7 @@ async def run_auth_probes(
         is_basic, realm = _basic_from_headers(headers)
         if status == 401 and is_basic:
             return AuthProbeResult(auth_type="basic", basic_realm=realm, notes=["detection only"])
-        return AuthProbeResult()
+        return AuthProbeResult(auth_type="none")
 
     is_basic, _ = _basic_from_headers(headers)
     if status == 401 and is_basic:
@@ -333,4 +336,21 @@ async def run_auth_probes(
     if status == 401:
         return await probe_basic_auth(client, url, consent)
 
-    return AuthProbeResult()
+    return AuthProbeResult(auth_type="none")
+
+
+def should_run_auth_probe(*, status: int, headers: httpx.Headers, body: str, url: str) -> bool:
+    """Skip auth work on generic pages to avoid thousands of pointless probes."""
+    if status == 401:
+        return True
+    if _basic_from_headers(headers)[0]:
+        return True
+    path = url.lower()
+    if any(k in path for k in ("/login", "/signin", "/auth", "/admin", "/wp-login", "/portal")):
+        return True
+    snippet = body[:8000].lower()
+    if 'type="password"' in snippet or "type='password'" in snippet:
+        return True
+    if "<form" in snippet and "password" in snippet:
+        return True
+    return False
