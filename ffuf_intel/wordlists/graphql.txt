@@ -1,0 +1,11 @@
+graphql
+graphiql
+playground
+altair
+voyager
+schema
+query
+mutation
+subscription
+__schema
+introspection

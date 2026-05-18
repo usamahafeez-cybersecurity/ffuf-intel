@@ -1,0 +1,34 @@
+Metadata-Version: 2.4
+Name: ffuf-intel
+Version: 1.0.0
+Summary: Intelligent ffuf wrapper with deep content inspection and behavioral reasoning
+Author: ffuf-intel
+License: MIT
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: httpx>=0.27.0
+Requires-Dist: rich>=13.7.0
+
+# ffuf-intel
+
+Python 3 CLI that wraps **[ffuf](https://github.com/ffuf/ffuf)** with **auto-calibration**, **async deep content inspection**, and **behavioral next-hop fuzzing**.
+
+Use only on systems you are authorized to test.
+
+## Setup
+
+```bash
+cd C:\Users\UsamaHafeez\Downloads\ffuf_intel
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+pip install -e .
+```
+
+## Usage
+
+```bash
+ffuf-intel -u https://target.example/FUZZ -w C:\path\to\wordlist.txt
+```
+
+See full docs in the project README sections for options, triggers, and legal notice.

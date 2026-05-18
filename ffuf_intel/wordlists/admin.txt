@@ -1,0 +1,13 @@
+login
+dashboard
+panel
+console
+manage
+manager
+wp-admin
+administrator
+signin
+auth
+backend
+cpanel
+phpmyadmin

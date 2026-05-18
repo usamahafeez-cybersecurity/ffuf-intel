@@ -1,0 +1,10 @@
+admin
+administrator
+root
+user
+test
+guest
+operator
+manager
+webadmin
+postgres
