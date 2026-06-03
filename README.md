@@ -157,6 +157,11 @@ git push -u origin main
 
 This tool is for **authorized security testing and education** only. The authors are not responsible for misuse. Always obtain permission before scanning or attempting credentials.
 
+## Credits
+
+This tool is built on top of ffuf and would not be possible without the work of the ffuf contributors:
+https://github.com/ffuf/ffuf
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
