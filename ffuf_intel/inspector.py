@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import re
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Iterable
 
 import httpx
+from rich.console import Console
 
 from urllib.parse import urlparse
 
@@ -26,6 +28,17 @@ from .patterns import (
 from .ffuf_runner import INSPECTABLE_FFUF_STATUSES
 
 MAX_BODY_BYTES = 512_000
+
+
+@dataclass(slots=True)
+class BaselineSnapshot:
+    status: int
+    content_type: str
+    title: str
+    content_length: int
+    word_count: int
+    line_count: int
+    html: str | None = None
 
 
 class _HtmlStructureParser(HTMLParser):
@@ -52,6 +65,16 @@ def _extract_title(html: str) -> str:
     return m.group(1).strip() if m else ""
 
 
+def _count_words(text: str) -> int:
+    return len(re.findall(r"\S+", text))
+
+
+def _count_lines(text: str) -> int:
+    if not text:
+        return 0
+    return text.count("\n") + 1
+
+
 def _html_structure_signals(html: str, baseline: _HtmlStructureParser | None) -> list[str]:
     parser = _HtmlStructureParser()
     try:
@@ -76,6 +99,38 @@ def _html_structure_signals(html: str, baseline: _HtmlStructureParser | None) ->
     return signals
 
 
+def _response_signals(
+    *,
+    status: int,
+    content_type: str,
+    body: str,
+    baseline: BaselineSnapshot | None,
+) -> tuple[list[str], str, int, int, int]:
+    text = body[:MAX_BODY_BYTES]
+    title = _extract_title(text)
+    content_length = len(text.encode("utf-8", errors="replace"))
+    word_count = _count_words(text)
+    line_count = _count_lines(text)
+    signals: list[str] = []
+    if baseline:
+        if status != baseline.status:
+            signals.append(f"status_delta:{baseline.status}->{status}")
+        if baseline.content_type and content_type and baseline.content_type != content_type:
+            signals.append("content_type_changed")
+        if baseline.title and title and baseline.title != title:
+            signals.append("title_changed")
+        length_delta = abs(content_length - baseline.content_length)
+        if length_delta >= max(120, baseline.content_length // 4):
+            signals.append(f"length_delta:{length_delta}")
+        word_delta = abs(word_count - baseline.word_count)
+        if word_delta >= max(20, baseline.word_count // 4):
+            signals.append(f"word_delta:{word_delta}")
+        line_delta = abs(line_count - baseline.line_count)
+        if line_delta >= max(10, baseline.line_count // 4):
+            signals.append(f"line_delta:{line_delta}")
+    return signals, title, content_length, word_count, line_count
+
+
 def _detect_triggers(text: str, url: str) -> set[str]:
     haystack = f"{url}\n{text}".lower()
     return {cat for cat, needles in TRIGGER_MAP.items() if any(n in haystack for n in needles)}
@@ -86,7 +141,7 @@ def inspect_body(
     status: int,
     body: str,
     headers: httpx.Headers,
-    baseline_html: str | None = None,
+    baseline: BaselineSnapshot | None = None,
     *,
     ffuf_status: int | None = None,
     profile: RequestProfile | None = None,
@@ -94,28 +149,89 @@ def inspect_body(
     text = body[:MAX_BODY_BYTES]
     combined = text + "\n" + "\n".join(f"{k}: {v}" for k, v in headers.items())
     finding = InspectionFinding(url=url, status=status, ffuf_status=ffuf_status)
+    content_type = headers.get("content-type", "")
+    finding.content_type = content_type or None
     if profile:
         finding.accepted_methods = list(profile.accepted_methods)
         finding.used_method = profile.method
-        finding.content_type = profile.content_type
+        if profile.content_type:
+            finding.content_type = profile.content_type
         finding.request_body = profile.body
         finding.adaptive_notes = list(profile.notes)
+    finding.signals = []
+    finding.title = _extract_title(text)
+    finding.content_length = len(text.encode("utf-8", errors="replace"))
+    finding.word_count = _count_words(text)
+    finding.line_count = _count_lines(text)
+    if baseline:
+        finding.baseline_status = baseline.status
+        finding.baseline_length = baseline.content_length
+        finding.baseline_title = baseline.title or None
+        baseline_parser: _HtmlStructureParser | None = None
+        if baseline.html and "html" in content_type.lower():
+            baseline_parser = _HtmlStructureParser()
+            try:
+                baseline_parser.feed(baseline.html[:MAX_BODY_BYTES])
+            except Exception:
+                baseline_parser = None
+    else:
+        baseline_parser = None
+    response_signals, title, content_length, word_count, line_count = _response_signals(
+        status=status,
+        content_type=content_type.lower(),
+        body=text,
+        baseline=baseline,
+    )
+    finding.title = title or finding.title
+    finding.content_length = content_length
+    finding.word_count = word_count
+    finding.line_count = line_count
+    finding.signals.extend(response_signals)
     finding.internal_ips = list(dict.fromkeys(INTERNAL_IP_RE.findall(combined)))[:20]
     finding.sensitive_keys = list(dict.fromkeys(m.group(1) for m in SENSITIVE_KEY_RE.finditer(combined)))[:20]
     finding.api_indicators = list(dict.fromkeys(API_PATH_RE.findall(combined)))[:20]
     for name, pattern in FRAMEWORK_SIGNATURES.items():
         if pattern.search(combined):
             finding.frameworks.append(name)
-    baseline_parser: _HtmlStructureParser | None = None
-    if baseline_html and "html" in headers.get("content-type", "").lower():
-        baseline_parser = _HtmlStructureParser()
-        try:
-            baseline_parser.feed(baseline_html[:MAX_BODY_BYTES])
-        except Exception:
-            baseline_parser = None
-    if "html" in headers.get("content-type", "").lower() or text.lstrip().startswith("<"):
+    if "html" in content_type.lower() or text.lstrip().startswith("<"):
         finding.html_signals = _html_structure_signals(text, baseline_parser)
+        finding.signals.extend(finding.html_signals)
     finding.triggers = _detect_triggers(combined, url)
+    if finding.triggers:
+        finding.signals.extend(sorted(f"trigger:{trigger}" for trigger in finding.triggers))
+    if finding.internal_ips:
+        finding.score += 3
+        finding.signals.append("internal_ip")
+    if finding.sensitive_keys:
+        finding.score += 5
+        finding.signals.append("sensitive_key")
+    if finding.api_indicators:
+        finding.score += 2
+        finding.signals.append("api_indicator")
+    if finding.frameworks:
+        finding.score += 1 + len(finding.frameworks)
+        finding.signals.append("framework")
+    if finding.triggers:
+        finding.score += len(finding.triggers)
+    if finding.accepted_methods:
+        finding.score += 2
+        finding.signals.append("adaptive_methods")
+    if finding.adaptive_notes:
+        finding.score += 1
+        finding.signals.append("adaptive_notes")
+    if finding.login_form_count:
+        finding.score += 4
+        finding.signals.append("login_form")
+    if finding.auth_success:
+        finding.score += 6
+        finding.signals.append("auth_success")
+    if finding.auth_notes:
+        finding.score += 1
+        finding.signals.append("auth_notes")
+    if finding.html_signals:
+        finding.score += 1
+    if response_signals:
+        finding.score += len(response_signals)
     return finding
 
 
@@ -172,7 +288,7 @@ class DeepInspector:
         self.adaptive = adaptive
         self.auth_consent = auth_consent or AuthConsent(AuthPolicy.ASK)
         self.max_inspect = max(1, max_inspect)
-        self._baseline_html: str | None = None
+        self._baseline: BaselineSnapshot | None = None
         self.profiles: dict[str, RequestProfile] = {}
         self.site_auth: dict[str, RequestProfile] = {}  # netloc -> profile with creds
 
@@ -192,9 +308,18 @@ class DeepInspector:
         ) as client:
             try:
                 resp = await client.get(base_url)
-                self._baseline_html = resp.text[:MAX_BODY_BYTES]
+                body = resp.text[:MAX_BODY_BYTES]
+                self._baseline = BaselineSnapshot(
+                    status=resp.status_code,
+                    content_type=resp.headers.get("content-type", ""),
+                    title=_extract_title(body),
+                    content_length=len(body.encode("utf-8", errors="replace")),
+                    word_count=_count_words(body),
+                    line_count=_count_lines(body),
+                    html=body,
+                )
             except httpx.HTTPError:
-                self._baseline_html = None
+                self._baseline = None
 
     async def inspect_many(
         self, targets: Iterable[tuple[str, int]], *, console: Console | None = None
@@ -264,7 +389,7 @@ class DeepInspector:
                         resp.status_code,
                         resp.text,
                         resp.headers,
-                        self._baseline_html,
+                        self._baseline,
                         ffuf_status=ffuf_status,
                         profile=profile if self.adaptive else None,
                     )

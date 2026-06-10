@@ -107,11 +107,12 @@ def run_ffuf(
     extra_args: list[str] | None = None,
     timeout: int | None = None,
     profile: RequestProfile | None = None,
+    fuzz_url: bool = True,
 ) -> tuple[list[FfufResult], Path]:
     wordlist = resolve_wordlist(wordlist)
     _check_extra_args(extra_args)
 
-    fuzz_url = normalize_fuzz_url(url)
+    target_url = normalize_fuzz_url(url) if fuzz_url else url
     fd, out_name = tempfile.mkstemp(suffix=".ffuf.json")
     os.close(fd)
     out_file = Path(out_name)
@@ -120,7 +121,7 @@ def run_ffuf(
     cmd: list[str] = [
         ffuf_bin,
         "-u",
-        fuzz_url,
+        target_url,
         "-w",
         str(wordlist),
         "-X",

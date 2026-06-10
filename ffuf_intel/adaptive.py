@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import httpx
 
@@ -35,6 +35,7 @@ class RequestProfile:
     method: str = "GET"
     content_type: str | None = None
     body: str | None = None
+    header_templates: list[str] = field(default_factory=list)
     accepted_methods: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     authorization: str | None = None  # value for Authorization header (e.g. "Basic ...")
@@ -48,6 +49,7 @@ class RequestProfile:
             headers.append(f"Authorization: {self.authorization}")
         if self.cookie:
             headers.append(f"Cookie: {self.cookie}")
+        headers.extend(self.header_templates)
         return headers
 
     def ffuf_body_template(self) -> str | None:
@@ -61,6 +63,10 @@ class RequestProfile:
         if self.content_type and "urlencoded" in self.content_type:
             return "FUZZ=1"
         return "FUZZ"
+
+    def clone(self, **changes: object) -> "RequestProfile":
+        """Return a copy that can be safely modified for a secondary pass."""
+        return replace(self, **changes)
 
 
 def _parse_allow_header(value: str) -> list[str]:
@@ -132,7 +138,7 @@ async def discover_methods(client: httpx.AsyncClient, url: str) -> tuple[list[st
     best = _pick_best_method(scores)
     if "POST" in accepted and _graphql_hint(url, ""):
         best = "POST"
-        notes.append("graphql path bias → POST")
+        notes.append("graphql path bias -> POST")
 
     return accepted, best, notes
 
@@ -170,7 +176,7 @@ async def discover_content(
             continue
 
         score = _score_response(resp.status_code)
-        notes.append(f"{method} {content_type} → {resp.status_code}")
+        notes.append(f"{method} {content_type} -> {resp.status_code}")
 
         if resp.status_code in CONTENT_REJECT:
             continue

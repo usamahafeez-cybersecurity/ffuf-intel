@@ -51,6 +51,16 @@ class InspectionFinding:
     url: str
     status: int
     ffuf_status: int | None = None
+    score: int = 0
+    signals: list[str] = field(default_factory=list)
+    title: str | None = None
+    content_type: str | None = None
+    content_length: int = 0
+    word_count: int = 0
+    line_count: int = 0
+    baseline_status: int | None = None
+    baseline_length: int | None = None
+    baseline_title: str | None = None
     internal_ips: list[str] = field(default_factory=list)
     sensitive_keys: list[str] = field(default_factory=list)
     api_indicators: list[str] = field(default_factory=list)
@@ -74,7 +84,8 @@ class InspectionFinding:
     @property
     def is_interesting(self) -> bool:
         return bool(
-            self.internal_ips
+            self.score >= 3
+            or self.internal_ips
             or self.sensitive_keys
             or self.api_indicators
             or self.frameworks

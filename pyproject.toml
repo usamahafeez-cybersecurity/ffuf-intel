@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ffuf-intel"
-version = "1.0.0"
+version = "1.1.0"
 description = "Intelligent ffuf wrapper with deep content inspection and behavioral reasoning"
 readme = "README.md"
 requires-python = ">=3.10"

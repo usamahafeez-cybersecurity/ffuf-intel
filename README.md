@@ -14,6 +14,7 @@ Intelligent Python wrapper around [ffuf](https://github.com/ffuf/ffuf) with deep
 | **Adaptive HTTP** | Probes allowed methods (405), Content-Types (JSON, form, XML) |
 | **Auth intelligence** | Login form + HTTP Basic detection; optional default/common cred tests |
 | **Next-hop fuzzing** | Triggers (`admin`, `api`, `graphql`, `config`) spawn targeted secondary ffuf passes |
+| **Intel pass** | Same-origin crawling, version fingerprints, forms, JS file harvesting, hidden endpoint mining |
 
 ## Requirements
 
@@ -61,11 +62,21 @@ If `FUZZ` is omitted, it is appended automatically.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--ffuf-path` | PATH lookup | Explicit path to ffuf binary |
-| `--max-depth` | `2` | Recursive reasoning depth |
+| `--aggression` | `A2` | Aggression preset: `A1` to `A4` |
+| `--max-depth` | preset-based | Override recursive reasoning depth |
 | `--concurrency` | `20` | Parallel inspection requests |
 | `--timeout` | `15` | Inspection HTTP timeout (seconds) |
 | `--no-adaptive` | off | Disable method/Content-Type probing |
+| `--fuzz-modes` | `path,query,header` | Secondary fuzz modes: `path`, `query`, `header`, `body` |
+| `--all-wordlists` | off | Use every bundled wordlist for secondary passes |
+| `--no-result-threshold` | preset-based | Prompt after this many zero-result passes |
+| `--continue-without-ask` | off | Continue automatically when the threshold is reached |
+| `--output-dir` | `ffuf-intel-output/` | Directory where JSON and Markdown reports are written |
 | `--auth-policy` | `ask` | Credential testing: `off`, `ask`, `defaults`, `common`, `unrestricted` |
+| `--intel` | off | Crawl same-origin pages and mine technology versions + JavaScript endpoints |
+| `--crawl-depth` | `2` | Maximum depth for the `--intel` crawler |
+| `--crawl-pages` | `100` | Maximum pages for the `--intel` crawler |
+| `--probe-js-endpoints` | off | Actively probe same-origin endpoints found in JavaScript |
 | `-v` | off | Verbose output |
 
 ### Examples
@@ -82,7 +93,31 @@ ffuf-intel -u https://target.example/FUZZ -w admin.txt --auth-policy off
 
 # Auto-try default credentials (authorized labs only)
 ffuf-intel -u https://target.example/FUZZ -w admin.txt --auth-policy defaults
+
+# More aggressive full sweep
+ffuf-intel -u https://target.example/FUZZ -w wordlists/common.txt --aggression A4 --all-wordlists
+
+# Add crawler, version detection, and JS hidden endpoint discovery
+ffuf-intel -u https://target.example/FUZZ -w wordlists/common.txt --intel
+
+# Also probe discovered same-origin JS endpoints
+ffuf-intel -u https://target.example/FUZZ -w wordlists/common.txt --intel --probe-js-endpoints
+
+# Keep going automatically after zero-result streaks
+ffuf-intel -u https://target.example/FUZZ -w wordlists/common.txt --no-result-threshold 3 --continue-without-ask
 ```
+
+## Intelligence pass
+
+`--intel` adds a safe, same-origin discovery layer before the ffuf campaign:
+
+- Crawls HTML pages up to `--crawl-depth` / `--crawl-pages`
+- Extracts forms, linked JavaScript files, and inline scripts
+- Fingerprints server headers, generator tags, CMS/framework markers, and JavaScript library versions
+- Mines JavaScript for hidden API paths, GraphQL/auth/admin endpoints, URL parameters, and high-signal secret patterns
+- Writes structured results to `report.json` under `intel` and summarizes them in `report.md`
+
+Endpoint probing is disabled by default. Use `--probe-js-endpoints` only when the target is explicitly in scope; probes are constrained to the same origin as the target URL.
 
 ## Auth policies
 
@@ -110,6 +145,9 @@ Wordlists: `ffuf_intel/wordlists/default_users.txt`, `common_passwords.txt`
 ffuf-intel/
 ├── ffuf_intel/
 │   ├── cli.py              # CLI entry
+│   ├── crawler.py          # Same-origin crawl, JS/form harvesting
+│   ├── version_detect.py   # Header/HTML/JS version fingerprints
+│   ├── js_miner.py         # Hidden JS endpoint and secret-pattern discovery
 │   ├── ffuf_runner.py      # subprocess ffuf
 │   ├── inspector.py        # async deep inspection
 │   ├── adaptive.py         # method / Content-Type probing

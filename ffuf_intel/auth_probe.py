@@ -34,6 +34,8 @@ LOGIN_FAIL_HINTS = re.compile(
     r"(?i)(invalid|incorrect|failed|denied|wrong|error|bad credentials|login required)"
 )
 LOGIN_OK_HINTS = re.compile(r"(?i)(logout|sign out|dashboard|welcome back|/my account)")
+LOCKOUT_HINTS = re.compile(r"(?i)(locked|lockout|too many attempts|try again later|suspicious)")
+CAPTCHA_HINTS = re.compile(r"(?i)(captcha|recaptcha|hcaptcha|turnstile)")
 
 
 @dataclass(slots=True)
@@ -172,6 +174,18 @@ def _login_success(before_len: int, resp: httpx.Response, body: str) -> bool:
     return False
 
 
+def _should_stop_attempting(resp: httpx.Response, body: str) -> bool:
+    if resp.status_code == 429:
+        return True
+    if resp.status_code in (403, 423, 428) and LOCKOUT_HINTS.search(body):
+        return True
+    if CAPTCHA_HINTS.search(body):
+        return True
+    if LOCKOUT_HINTS.search(body) and resp.status_code in (200, 401, 403):
+        return True
+    return False
+
+
 def _load_lines(name: str) -> list[str]:
     path = WORDLIST_DIR / name
     if not path.is_file():
@@ -239,6 +253,9 @@ async def probe_basic_auth(
             resp = await client.get(url, auth=(user, pwd))
         except httpx.HTTPError:
             continue
+        if _should_stop_attempting(resp, resp.text):
+            result.notes.append(f"stopped after rate-limit/lockout signal at attempt {result.credential_attempts}")
+            return result
         if resp.status_code not in (401, 403) and _login_success(before_len, resp, resp.text):
             result.success = True
             result.working_username = user
@@ -284,6 +301,9 @@ async def probe_login_forms(
                     resp = await client.post(form.action_url, data=data)
             except httpx.HTTPError:
                 continue
+            if _should_stop_attempting(resp, resp.text):
+                result.notes.append(f"stopped after rate-limit/lockout signal at attempt {result.credential_attempts}")
+                return result
             if _login_success(before_len, resp, resp.text):
                 result.success = True
                 result.working_username = user
